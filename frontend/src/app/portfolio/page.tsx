@@ -4,14 +4,14 @@
 // BOXMEOUT — Portfolio Page (/portfolio)
 // ============================================================
 
-import { useMemo, useCallback, useState } from 'react';
+import { useMemo, useCallback, useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useWallet } from '../../hooks/useWallet';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { useMarkets } from '../../hooks/useMarkets';
 import { ConnectPrompt } from '../../components/ui/ConnectPrompt';
 import { BetHistoryTable } from '../../components/bet/BetHistoryTable';
-import { TxStatusToast } from '../../components/ui/TxStatusToast';
+import { useToast } from '../../components/ui/ToastProvider';
 import type { Bet } from '../../types';
 
 // ─── BettorStats ─────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ export default function PortfolioPage(): JSX.Element {
   const { portfolio, isLoading, claimTxStatus, claimWinnings, claimRefund } = usePortfolio();
   const { markets } = useMarkets();
   const [claimingAll, setClaimingAll] = useState(false);
-  const [dismissedToast, setDismissedToast] = useState(false);
+  const toast = useToast();
 
   const marketsMap = useMemo(
     () => Object.fromEntries(markets.map((m) => [m.market_id, m])),
@@ -79,7 +79,14 @@ export default function PortfolioPage(): JSX.Element {
     setClaimingAll(false);
   }, [portfolio, claimWinnings, claimingAll]);
 
-  const displayStatus = dismissedToast ? { hash: null, status: 'idle' as const, error: null } : claimTxStatus;
+  // Toast feedback for claim/refund transactions
+  useEffect(() => {
+    if (claimTxStatus.status === 'success') {
+      toast.success('Winnings claimed successfully!');
+    } else if (claimTxStatus.status === 'error') {
+      toast.error(claimTxStatus.error ?? 'Claim failed. Please try again.');
+    }
+  }, [claimTxStatus.status]);
 
   if (!isConnected) {
     return (
@@ -143,11 +150,6 @@ export default function PortfolioPage(): JSX.Element {
           onRefund={claimRefund}
         />
       </section>
-
-      <TxStatusToast
-        txStatus={displayStatus}
-        onDismiss={() => setDismissedToast(true)}
-      />
     </main>
   );
 }

@@ -80,6 +80,10 @@ frontend/e2e/test-results/
 blob-report/
 playwright/.auth/
 
+# ─── Jest cache ──────────────────────────────────────────────
+.jest-cache/
+jest_cache/
+
 # ─── Docker ──────────────────────────────────────────────────
 .docker/
 
