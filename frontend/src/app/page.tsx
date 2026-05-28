@@ -10,31 +10,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useMarkets } from '../hooks/useMarkets';
 import { MarketCard } from '../components/market/MarketCard';
 import { MarketCardSkeleton } from '../components/market/MarketCardSkeleton';
+import { StatsBanner } from '../components/ui/StatsBanner';
+import { MarketFilters } from '../components/market/MarketFilters';
 
-const WEIGHT_CLASSES = [
-  'All Weight Classes',
-  'Heavyweight',
-  'Light Heavyweight',
-  'Super Middleweight',
-  'Middleweight',
-  'Super Welterweight',
-  'Welterweight',
-  'Super Lightweight',
-  'Lightweight',
-  'Super Featherweight',
-  'Featherweight',
-  'Super Bantamweight',
-  'Bantamweight',
-  'Super Flyweight',
-  'Flyweight',
-  'Minimumweight',
-];
-const STATUSES = ['All', 'Open', 'Resolved'];
-const SORT_OPTIONS = [
-  { value: 'date_asc', label: 'Date ↑' },
-  { value: 'date_desc', label: 'Date ↓' },
-  { value: 'pool_desc', label: 'Pool ↓' },
-];
 const LIMIT = 12;
 
 export default function HomePage(): JSX.Element {
@@ -87,51 +65,20 @@ export default function HomePage(): JSX.Element {
         <p className="text-gray-400 text-sm mt-1">Decentralized boxing prediction markets on Stellar</p>
       </div>
 
+      {/* Stats Banner */}
+      <StatsBanner />
+
       {/* Filter bar */}
-      <div className="flex flex-wrap gap-3 items-center">
-        {/* Weight class dropdown */}
-        <select
-          value={weightClass}
-          onChange={(e) =>
-            setParam('weight_class', e.target.value === 'All Weight Classes' ? null : e.target.value)
-          }
-          className="min-h-[44px] bg-gray-800 text-white text-sm rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-amber-500"
-        >
-          {WEIGHT_CLASSES.map((w) => (
-            <option key={w}>{w}</option>
-          ))}
-        </select>
-
-        {/* Status tabs */}
-        <div className="flex rounded-lg overflow-hidden border border-gray-700">
-          {STATUSES.map((s) => (
-            <button
-              key={s}
-              onClick={() => setParam('status', s === 'All' ? null : s.toLowerCase())}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                status === (s === 'All' ? 'All' : s)
-                  ? 'bg-amber-500 text-black'
-                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-
-        {/* Sort control */}
-        <select
-          value={sort}
-          onChange={(e) => setParam('sort', e.target.value)}
-          className="min-h-[44px] bg-gray-800 text-white text-sm rounded-lg px-3 focus:outline-none focus:ring-2 focus:ring-amber-500 ml-auto"
-        >
-          {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      </div>
+      <MarketFilters
+        weightClass={weightClass}
+        status={status}
+        sort={sort}
+        onWeightClassChange={(value) =>
+          setParam('weight_class', value === 'All Weight Classes' ? null : value)
+        }
+        onStatusChange={(value) => setParam('status', value === 'All' ? null : value.toLowerCase())}
+        onSortChange={(value) => setParam('sort', value)}
+      />
 
       {/* Error banner */}
       {error && (
