@@ -63,6 +63,22 @@ export interface MarketWithOdds extends Market {
   odds: MarketOdds;
 }
 
+export interface OutcomeOdds {
+  outcome: string;
+  multiplier: number;
+  implied_probability: number;
+  pool: string;
+  total_pool: string;
+}
+
+export interface AllOutcomeOdds {
+  market_id: string;
+  fighter_a: OutcomeOdds;
+  fighter_b: OutcomeOdds;
+  draw: OutcomeOdds;
+  total_pool: string;
+}
+
 export interface Portfolio {
   address: string;
   active_bets: Bet[];
@@ -71,6 +87,11 @@ export interface Portfolio {
   total_won_xlm: number;
   total_lost_xlm: number;
   pending_claims: Bet[];
+}
+
+export interface ProjectedPayout {
+  amount: string;
+  formatted_xlm: number;
 }
 
 /**
@@ -283,6 +304,85 @@ export async function calculateOdds(market_id: string): Promise<{ fighterA: numb
   };
 }
 
+/** Shared pool loader for odds calculations. */
+async function loadMarketPools(market_id: string) {
+  const market = await db().findMarketById(market_id);
+  if (!market) throw AppError.notFound(`Market not found: ${market_id}`);
+  return {
+    totalPool: BigInt(market.total_pool),
+    poolA: BigInt(market.pool_a),
+    poolB: BigInt(market.pool_b),
+    poolDraw: BigInt(market.pool_draw),
+    feeBps: BigInt(market.fee_bps),
+    totalPoolStr: market.total_pool,
+  };
+}
+
+/** Build an OutcomeOdds from raw pool values. */
+function computeOutcomeOdds(
+  pool: bigint,
+  totalPool: bigint,
+  feeBps: bigint,
+  outcome: string,
+  totalPoolStr: string,
+): OutcomeOdds {
+  if (totalPool === 0n || pool === 0n) {
+    return { outcome, multiplier: 0, implied_probability: 0, pool: pool.toString(), total_pool: totalPoolStr };
+  }
+  const fee = (totalPool * feeBps) / 10000n;
+  const netPool = totalPool - fee;
+  const multiplier = Number((netPool * 10000n) / pool) / 10000;
+  const implied_probability = Number((pool * 10000n) / totalPool) / 100;
+  return {
+    outcome,
+    multiplier: Math.round(multiplier * 100) / 100,
+    implied_probability: Math.round(implied_probability * 100) / 100,
+    pool: pool.toString(),
+    total_pool: totalPoolStr,
+  };
+}
+
+/**
+ * Calculates parimutuel odds for a single specific outcome.
+ *
+ * Parimutuel formula:
+ *   multiplier = (total_pool - fee) / outcome_pool
+ *   implied_probability = outcome_pool / total_pool
+ *
+ * Returns zero multiplier/probability for empty pools.
+ */
+export async function calculateSingleOutcomeOdds(
+  market_id: string,
+  outcome: 'fighter_a' | 'fighter_b' | 'draw',
+): Promise<OutcomeOdds> {
+  const { totalPool, poolA, poolB, poolDraw, feeBps, totalPoolStr } = await loadMarketPools(market_id);
+  const pool = outcome === 'fighter_a' ? poolA : outcome === 'fighter_b' ? poolB : poolDraw;
+  return computeOutcomeOdds(pool, totalPool, feeBps, outcome, totalPoolStr);
+}
+
+/**
+ * Calculates parimutuel odds for all three outcomes.
+ *
+ * Parimutuel formula (per outcome):
+ *   multiplier = (total_pool - fee) / outcome_pool
+ *   implied_probability = outcome_pool / total_pool
+ *
+ * Returns zeros for outcomes with empty pools.
+ */
+export async function calculateOutcomeOdds(
+  market_id: string,
+): Promise<AllOutcomeOdds> {
+  const { totalPool, poolA, poolB, poolDraw, feeBps, totalPoolStr } = await loadMarketPools(market_id);
+
+  return {
+    market_id,
+    fighter_a: computeOutcomeOdds(poolA, totalPool, feeBps, 'fighter_a', totalPoolStr),
+    fighter_b: computeOutcomeOdds(poolB, totalPool, feeBps, 'fighter_b', totalPoolStr),
+    draw: computeOutcomeOdds(poolDraw, totalPool, feeBps, 'draw', totalPoolStr),
+    total_pool: totalPoolStr,
+  };
+}
+
 /**
  * Returns all bets placed by a given Stellar address across all markets.
  * Returns an empty array (never 404) when the address has no bets.
@@ -415,6 +515,58 @@ export async function getPortfolioByAddress(
     total_won_xlm,
     total_lost_xlm,
     pending_claims,
+  };
+}
+
+/**
+ * Simulates projected payout for a hypothetical bet on a market.
+ *
+ * Parimutuel formula:
+ *   payout = (hypothetical_amount / outcome_pool) * (total_pool - fee)
+ *
+ * Returns zero if the outcome pool is empty or the market is cancelled.
+ */
+export async function simulateProjectedPayout(
+  market_id: string,
+  amount: string,
+  outcome: 'fighter_a' | 'fighter_b' | 'draw',
+): Promise<ProjectedPayout> {
+  const market = await db().findMarketById(market_id);
+  if (!market) throw AppError.notFound(`Market not found: ${market_id}`);
+
+  if (market.status === 'cancelled') {
+    return { amount: '0', formatted_xlm: 0 };
+  }
+
+  const betAmount = BigInt(amount);
+  if (betAmount <= 0n) {
+    return { amount: '0', formatted_xlm: 0 };
+  }
+
+  const total_pool = BigInt(market.total_pool);
+  const fee_bps = market.fee_bps;
+  const fee = (total_pool * BigInt(fee_bps)) / 10000n;
+  const pool_after_fee = total_pool - fee;
+
+  let winning_pool: bigint;
+  if (outcome === 'fighter_a') {
+    winning_pool = BigInt(market.pool_a);
+  } else if (outcome === 'fighter_b') {
+    winning_pool = BigInt(market.pool_b);
+  } else {
+    winning_pool = BigInt(market.pool_draw);
+  }
+
+  if (winning_pool <= 0n) {
+    return { amount: '0', formatted_xlm: 0 };
+  }
+
+  const payout = (betAmount * pool_after_fee) / winning_pool;
+  const formatted_xlm = Number(payout) / 10_000_000;
+
+  return {
+    amount: payout.toString(),
+    formatted_xlm,
   };
 }
 

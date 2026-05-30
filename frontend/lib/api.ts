@@ -55,14 +55,19 @@ export interface MarketListResponse {
   limit: number;
 }
 
+export interface OutcomeOdds {
+  outcome: string;
+  multiplier: number;
+  implied_probability: number;
+  pool: string;
+  total_pool: string;
+}
+
 export interface MarketOdds {
   market_id: string;
-  odds_a: number;
-  odds_b: number;
-  odds_draw: number;
-  pool_a: string;
-  pool_b: string;
-  pool_draw: string;
+  fighter_a: OutcomeOdds;
+  fighter_b: OutcomeOdds;
+  draw: OutcomeOdds;
   total_pool: string;
 }
 
@@ -110,9 +115,13 @@ export async function fetchMarketStats(market_id: string): Promise<MarketStats> 
   return apiFetch<MarketStats>(`/api/markets/${market_id}/stats`);
 }
 
-/** GET /api/markets/:market_id/odds — live odds for a market */
-export async function fetchOdds(market_id: string): Promise<MarketOdds> {
-  return apiFetch<MarketOdds>(`/api/markets/${market_id}/odds`);
+/** GET /api/markets/:market_id/odds — live parimutuel odds for a market */
+export async function fetchOdds(
+  market_id: string,
+  outcome?: 'fighter_a' | 'fighter_b' | 'draw',
+): Promise<MarketOdds | OutcomeOdds> {
+  const qs = outcome ? `?outcome=${outcome}` : '';
+  return apiFetch<MarketOdds | OutcomeOdds>(`/api/markets/${market_id}/odds${qs}`);
 }
 
 /** GET /api/stats — platform-wide statistics */

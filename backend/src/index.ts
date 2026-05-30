@@ -12,7 +12,7 @@ import marketRouter from "./routes/market.routes";
 import adminRouter from "./routes/admin.routes";
 import { getPortfolio, getPlatformStats } from "./api/controllers/MarketController";
 import claimsRouter from "./routes/bet.routes";
-import { startAutoResolutionCron } from "./cron/autoResolution.cron";
+import { startAutoResolutionCron, startAutoLockCron } from "./cron/autoResolution.cron";
 
 // Validate environment variables on startup
 const env = validateEnv();
@@ -93,6 +93,7 @@ app.listen(PORT, () => {
     logger.info(`Swagger UI available at http://localhost:${PORT}/api/docs`);
   }
   startAutoResolutionCron();
+  startAutoLockCron();
 });
 
 export default app;

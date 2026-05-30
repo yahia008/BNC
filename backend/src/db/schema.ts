@@ -33,6 +33,7 @@ export const markets = pgTable(
     fee_bps: integer('fee_bps').default(200),
     resolved_at: timestamp('resolved_at', { withTimezone: true }),
     oracle_used: text('oracle_used'),
+    lock_before_secs: integer('lock_before_secs').default(3600),
     created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
     ledger_sequence: integer('ledger_sequence').default(0),
@@ -128,6 +129,25 @@ export const notification_jobs = pgTable(
   }),
 );
 
+export const disputes = pgTable(
+  'disputes',
+  {
+    id: serial('id').primaryKey(),
+    market_id: text('market_id').notNull().references(() => markets.market_id),
+    reason: text('reason').notNull(),
+    status: text('status').default('open'),
+    admin_notes: text('admin_notes'),
+    final_outcome: text('final_outcome'),
+    raised_at: timestamp('raised_at', { withTimezone: true }).defaultNow(),
+    reviewed_at: timestamp('reviewed_at', { withTimezone: true }),
+    resolved_at: timestamp('resolved_at', { withTimezone: true }),
+  },
+  (table) => ({
+    market_id_idx: index('disputes_market_id_idx').on(table.market_id),
+    status_idx: index('disputes_status_idx').on(table.status),
+  }),
+);
+
 export type Market = typeof markets.$inferSelect;
 export type NewMarket = typeof markets.$inferInsert;
 export type Bet = typeof bets.$inferSelect;
@@ -135,3 +155,5 @@ export type NewBet = typeof bets.$inferInsert;
 export type BlockchainEvent = typeof blockchain_events.$inferSelect;
 export type OracleReport = typeof oracle_reports.$inferSelect;
 export type NotificationJob = typeof notification_jobs.$inferSelect;
+export type Dispute = typeof disputes.$inferSelect;
+export type NewDispute = typeof disputes.$inferInsert;

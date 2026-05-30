@@ -15,6 +15,7 @@ const TERMINAL_STATUSES: MarketStatus[] = ['resolved', 'cancelled'];
 
 export interface UseMarketOddsResult {
   odds: MarketOdds | null;
+  getOutcomeOdds(outcome: 'fighter_a' | 'fighter_b' | 'draw'): import('../../lib/api').OutcomeOdds | null;
   isLoading: boolean;
   error: Error | null;
 }
@@ -33,13 +34,17 @@ export function useMarketOdds(
 
   const { data, isLoading, error } = useQuery<MarketOdds, Error>({
     queryKey: ['odds', marketId],
-    queryFn: () => fetchOdds(marketId),
+    queryFn: () => fetchOdds(marketId) as Promise<MarketOdds>,
     refetchInterval: isTerminal ? false : REFETCH_INTERVAL_MS,
     enabled: Boolean(marketId),
   });
 
   return {
     odds: data ?? null,
+    getOutcomeOdds: (outcome: 'fighter_a' | 'fighter_b' | 'draw') => {
+      if (!data) return null;
+      return data[outcome] ?? null;
+    },
     isLoading,
     error: error ?? null,
   };
