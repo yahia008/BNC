@@ -172,7 +172,53 @@ export async function getMarketOdds(
   }
 }
 
-const simulateQuerySchema = z.object({
+/**
+ * GET /api/markets/:market_id/odds/stream
+ *
+ * Server-Sent Events stream of live parimutuel odds for a market.
+ * Pushes an update immediately on connect, then every 5 seconds while the
+ * market is open. Closes automatically when the market reaches a terminal
+ * status (resolved / cancelled).
+ */
+export async function streamMarketOdds(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const { market_id } = req.params;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const TERMINAL = new Set(['resolved', 'cancelled']);
+  const INTERVAL_MS = 5_000;
+
+  const push = async (): Promise<boolean> => {
+    try {
+      const market = await MarketService.getMarketById(market_id);
+      const odds = await MarketService.calculateOutcomeOdds(market_id);
+      res.write(`data: ${JSON.stringify(odds)}\n\n`);
+      return TERMINAL.has((market as any).status ?? '');
+    } catch (err) {
+      res.write(`event: error\ndata: ${JSON.stringify({ message: (err as Error).message })}\n\n`);
+      return true; // close on error
+    }
+  };
+
+  const done = await push();
+  if (done) { res.end(); return; }
+
+  const timer = setInterval(async () => {
+    const finished = await push();
+    if (finished) { clearInterval(timer); res.end(); }
+  }, INTERVAL_MS);
+
+  req.on('close', () => clearInterval(timer));
+}
+
+
   amount: z.coerce.number().positive({ message: 'amount must be a positive number' }),
   outcome: z.enum(MARKET_ODDS_OUTCOMES),
 });
