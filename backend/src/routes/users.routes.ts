@@ -1,6 +1,6 @@
 // backend/src/routes/users.routes.ts - User Routes
 import { Router, Response, NextFunction } from 'express';
-import { usersController } from '../controllers/users.controller.js';
+import { usersController } from '../api/controllers/UsersController.js';
 import { requireAuth } from '../middleware/auth.middleware.js';
 import { requireAdmin } from '../middleware/admin.middleware.js';
 import { validate } from '../middleware/validation.middleware.js';

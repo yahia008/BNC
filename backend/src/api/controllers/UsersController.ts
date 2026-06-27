@@ -1,9 +1,9 @@
-// backend/src/controllers/users.controller.ts - User Controller
+// backend/src/api/controllers/UsersController.ts - User Controller
 import { Response } from 'express';
-import { UserService } from '../services/user.service.js';
-import { AuthenticatedRequest } from '../types/auth.types.js';
-import { UserTier } from '../types/auth.types.js';
-import { logger } from '../utils/logger.js';
+import { UserService } from '../../services/user.service.js';
+import { AuthenticatedRequest } from '../../types/auth.types.js';
+import { UserTier } from '@prisma/client';
+import { logger } from '../../utils/logger.js';
 
 const userService = new UserService();
 

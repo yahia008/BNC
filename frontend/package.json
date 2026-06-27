@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
+    "analyze": "ANALYZE=true next build",
     "start": "next start -p 3000",
     "test": "jest",
     "lint": "next lint",
@@ -22,6 +23,7 @@
   "devDependencies": {
     "@babel/preset-env": "^7.29.2",
     "@babel/preset-typescript": "^7.29.7",
+    "@next/bundle-analyzer": "16.2.9",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^14.3.1",
     "@testing-library/user-event": "^14.6.1",

@@ -6,6 +6,7 @@ import {
     getMarketBets,
     getMarketBetsValidation,
     getMarketOdds,
+    streamMarketOdds,
     getMarketStats,
     getPlatformStats,
     resolveMarket,
@@ -101,6 +102,24 @@ router.get('/:market_id', getMarket);
  *         description: Paginated list of bets
  */
 router.get('/:market_id/bets', getMarketBetsValidation, getMarketBets);
+
+/**
+ * @swagger
+ * /markets/{market_id}/odds/stream:
+ *   get:
+ *     summary: Server-Sent Events stream of live odds for a market
+ *     tags: [Markets]
+ *     parameters:
+ *       - in: path
+ *         name: market_id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: SSE stream — pushes odds on connect then every 5 s; closes when market is terminal
+ */
+router.get('/:market_id/odds/stream', streamMarketOdds);
 
 /**
  * @swagger
