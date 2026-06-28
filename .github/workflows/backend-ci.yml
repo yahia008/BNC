@@ -49,6 +49,33 @@ jobs:
               .catch(e => { console.error(e.message); process.exit(1); });
           "
 
+      - name: Check migrations for destructive operations
+        working-directory: backend
+        run: npm run migrate:check
+        env:
+          MIGRATION_CHECK_STRICT: "true"
+
+      - name: Verify Drizzle schema path is valid
+        working-directory: backend
+        run: node -e "
+          const fs = require('fs');
+          const path = require('path');
+          const config = require('./drizzle.config').default;
+          const schemaPath = path.resolve(__dirname, config.schema);
+          if (!fs.existsSync(schemaPath)) {
+            console.error('❌ Schema path does not exist:', schemaPath);
+            process.exit(1);
+          } else {
+            console.log('✅ Schema path is valid:', schemaPath);
+          }
+        "
+
+      - name: Check for Drizzle schema drift
+        working-directory: backend
+        run: npm run drizzle:check
+        env:
+          DATABASE_URL: postgresql://boxmeout:boxmeout@localhost:5432/boxmeout
+
       - name: Lint
         working-directory: backend
         run: npm run lint

@@ -22,6 +22,10 @@ const envSchema = z.object({
   POLL_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
   BOXING_API_URL: z.string().url().optional(),
   SENTRY_DSN: z.string().url().optional(),
+  ALERT_WEBHOOK_URL: z.string().url().optional(),
+  DB_POOL_MAX: z.coerce.number().int().positive().default(10),
+  DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  DB_POOL_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 });
 
 export type Env = z.infer<typeof envSchema>;

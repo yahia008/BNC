@@ -13,6 +13,25 @@ See [Quick Start](./QUICK_START.md) for local development environment setup.
 - Write tests for new features
 - Keep commit messages clear and descriptive
 
+## Migration Safety Guidelines
+
+To ensure safe deployments and zero-downtime operations, follow these migration rules:
+
+1. **Never Drop/Truncate/Rename Objects in a Single Deployment**
+   - Avoid DROP COLUMN, DROP TABLE, TRUNCATE, or RENAME operations in migrations
+   - If you must remove a column, first deploy code that stops reading/writing it, then deploy a migration to drop it in a separate release
+2. **Backward Compatibility First**
+   - All migrations must be compatible with the previous version of the code
+   - For schema changes, ensure new columns have defaults or allow NULLs initially
+3. **Use the Migration Checker**
+   - Before committing migrations, run `npm run migrate:check` to catch destructive operations
+   - Use `npm run migrate:dry-run` to preview pending migrations
+4. **Test Migrations**
+   - Run migrations locally against a copy of production-like schema
+   - Test rollbacks whenever possible
+5. **Review Required**
+   - Any destructive migration requires explicit approval in PR review
+
 ## Deployment
 
 ### Contract Deployment
@@ -67,6 +86,11 @@ npm run test
 # Contract tests
 cd contracts
 cargo test
+
+# Check migrations
+cd backend
+npm run migrate:check
+npm run migrate:dry-run
 ```
 
 ## Reporting Issues

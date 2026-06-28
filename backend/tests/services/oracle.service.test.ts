@@ -6,10 +6,28 @@ import { pool } from '../../src/config/db';
 
 jest.mock('../../src/services/StellarService');
 jest.mock('../../src/config/db');
-jest.mock('../../src/services/cache.service', () => ({
-  cacheGet: jest.fn().mockResolvedValue(undefined),
-  cacheSet: jest.fn().mockResolvedValue(undefined),
-}));
+
+const mockRedisIncr = jest.fn().mockResolvedValue(1);
+const mockRedisExpire = jest.fn().mockResolvedValue(1);
+const mockRedisGet = jest.fn().mockResolvedValue(null);
+const mockRedisDel = jest.fn().mockResolvedValue(1);
+const mockRedisSet = jest.fn().mockResolvedValue('OK');
+
+jest.mock('../../src/services/cache.service', () => {
+  const original = jest.requireActual('../../src/services/cache.service');
+  return {
+    ...original,
+    cacheGet: jest.fn().mockResolvedValue(undefined),
+    cacheSet: jest.fn().mockResolvedValue(undefined),
+    redis: {
+      incr: jest.fn((...args: any[]) => mockRedisIncr(...args)),
+      expire: jest.fn((...args: any[]) => mockRedisExpire(...args)),
+      get: jest.fn((...args: any[]) => mockRedisGet(...args)),
+      del: jest.fn((...args: any[]) => mockRedisDel(...args)),
+      set: jest.fn((...args: any[]) => mockRedisSet(...args)),
+    },
+  };
+});
 
 // Mock global fetch for external API calls
 const mockFetch = jest.fn() as jest.Mock;
@@ -364,6 +382,39 @@ describe('OracleService', () => {
 
       // Should not throw
       await expect(OracleService.pollFightResults()).resolves.not.toThrow();
+    });
+
+    it('should send alert after 3 consecutive failures', async () => {
+      const mockMarkets = {
+        rowCount: 1,
+        rows: [{ market_id: 'market-123', match_id: mockMatchId }],
+      };
+
+      (pool.query as jest.Mock).mockResolvedValueOnce(mockMarkets);
+
+      // Mock fetch to throw (simulate API down)
+      mockFetch.mockRejectedValue(new Error('API error'));
+      
+      // Set up redis mocks for 3rd failure
+      mockRedisIncr.mockResolvedValue(3);
+      mockRedisGet.mockResolvedValue(null);
+
+      // Set ALERT_WEBHOOK_URL
+      process.env.ALERT_WEBHOOK_URL = 'http://mock-webhook';
+
+      // Should call fetch to send alert
+      await OracleService.pollFightResults();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://mock-webhook',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        })
+      );
+
+      // Clean up
+      delete process.env.ALERT_WEBHOOK_URL;
     });
   });
 

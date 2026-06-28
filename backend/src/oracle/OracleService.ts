@@ -9,11 +9,78 @@ import { Address, Keypair, xdr } from '@stellar/stellar-sdk';
 import { pool } from '../config/db';
 import { invokeContract } from '../services/StellarService';
 import { logger } from '../utils/logger';
-import { cacheGet, cacheSet } from '../services/cache.service';
+import { cacheGet, cacheSet, redis } from '../services/cache.service';
 import type { OracleReport } from '../models/OracleReport';
 import type { Market } from '../models/Market';
 
 export type FightOutcome = 'fighter_a' | 'fighter_b' | 'draw' | 'no_contest';
+
+const FAILURE_THRESHOLD = 3;
+const FAILURE_KEY_PREFIX = 'oracle:failure:';
+const ALERT_SENT_KEY_PREFIX = 'oracle:alert_sent:';
+
+async function trackFailure(market_id: string): Promise<boolean> {
+  const failureKey = `${FAILURE_KEY_PREFIX}${market_id}`;
+  const alertSentKey = `${ALERT_SENT_KEY_PREFIX}${market_id}`;
+
+  try {
+    const failures = await redis.incr(failureKey);
+    // Set TTL to 7 days to prevent key buildup
+    await redis.expire(failureKey, 7 * 24 * 60 * 60);
+
+    const alertSent = await redis.get(alertSentKey);
+    if (failures >= FAILURE_THRESHOLD && !alertSent) {
+      return true;
+    }
+    return false;
+  } catch (err) {
+    logger.error({ err, market_id }, 'trackFailure: Redis error');
+    return false;
+  }
+}
+
+async function clearFailureTracking(market_id: string): Promise<void> {
+  const failureKey = `${FAILURE_KEY_PREFIX}${market_id}`;
+  const alertSentKey = `${ALERT_SENT_KEY_PREFIX}${market_id}`;
+
+  try {
+    await redis.del(failureKey);
+    await redis.del(alertSentKey);
+  } catch (err) {
+    logger.error({ err, market_id }, 'clearFailureTracking: Redis error');
+  }
+}
+
+async function sendAlert(market_id: string, match_id: string): Promise<void> {
+  const webhookUrl = process.env.ALERT_WEBHOOK_URL;
+  if (!webhookUrl) {
+    logger.warn('sendAlert: ALERT_WEBHOOK_URL not configured');
+    return;
+  }
+
+  const alertSentKey = `${ALERT_SENT_KEY_PREFIX}${market_id}`;
+
+  try {
+    const payload = {
+      title: 'Oracle Resolution Failure Alert',
+      message: `Market ${market_id} (match ${match_id}) has failed to resolve ${FAILURE_THRESHOLD} times consecutively. User funds may be locked.`,
+      market_id,
+      match_id,
+      timestamp: new Date().toISOString(),
+    };
+
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    await redis.set(alertSentKey, '1', 'EX', 7 * 24 * 60 * 60);
+    logger.info({ market_id, match_id }, 'sendAlert: Alert sent successfully');
+  } catch (err) {
+    logger.error({ err, market_id, match_id }, 'sendAlert: Failed to send alert');
+  }
+}
 
 // Shape of a single fight entry returned by the external boxing API
 interface BoxingApiFight {
@@ -384,6 +451,7 @@ export async function runAutoResolutionJob(): Promise<{ resolved: number; skippe
           await invokeContract(contract_address, 'cancel_market', [callerScVal, reasonScVal]);
           stats.resolved++;
           logger.info({ market_id, match_id }, 'runAutoResolutionJob: market auto-cancelled');
+          await clearFailureTracking(market_id);
         } else {
           logger.info({ market_id, match_id }, 'runAutoResolutionJob: no confirmed result yet, skipping');
           stats.skipped++;
@@ -399,6 +467,7 @@ export async function runAutoResolutionJob(): Promise<{ resolved: number; skippe
         { market_id, match_id, outcome },
         'runAutoResolutionJob: fight result submitted successfully',
       );
+      await clearFailureTracking(market_id);
     } catch (err) {
       // Step 5: Log the error but continue processing remaining markets
       logger.error(
@@ -406,6 +475,10 @@ export async function runAutoResolutionJob(): Promise<{ resolved: number; skippe
         'runAutoResolutionJob: error processing market, requires manual review',
       );
       stats.failed++;
+      const shouldSendAlert = await trackFailure(market_id);
+      if (shouldSendAlert) {
+        await sendAlert(market_id, match_id);
+      }
     }
   }
 

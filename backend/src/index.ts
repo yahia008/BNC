@@ -1,6 +1,9 @@
 import express from "express";
 import pinoHttp from "pino-http";
 import { validateEnv } from "./config/env";
+// Validate environment variables first before importing anything else that uses them!
+const env = validateEnv();
+
 import { setupSwagger } from "./config/swagger";
 import { errorMiddleware } from "./middleware/error.middleware";
 import { initSentry, applySentryRequestHandler } from "./middleware/sentry.middleware";
@@ -18,9 +21,6 @@ import claimsRouter from "./routes/bet.routes";
 import { startAutoResolutionCron, startAutoLockCron } from "./cron/autoResolution.cron";
 import { startCleanupCron } from "./cron/cleanup.cron";
 import { initActivityFeed } from "./websocket/realtime";
-
-// Validate environment variables on startup
-const env = validateEnv();
 
 // Initialise Sentry before any other code (captures unhandled rejections/exceptions)
 initSentry(env.SENTRY_DSN, env.NODE_ENV);
@@ -42,7 +42,16 @@ app.get("/health", async (_req, res) => {
   try {
     await pool.query("SELECT 1");
     await redis.ping();
-    res.json({ status: "ok", db: "connected", redis: "connected" });
+    res.json({
+      status: "ok",
+      db: "connected",
+      redis: "connected",
+      dbPool: {
+        totalCount: pool.totalCount,
+        idleCount: pool.idleCount,
+        waitingCount: pool.waitingCount,
+      },
+    });
   } catch {
     res.status(503).json({ status: "error" });
   }
