@@ -104,4 +104,18 @@ describe('ActivityFeed integration', () => {
 
     ws.close();
   });
-});
+
+  it('removes empty subscription sets to prevent memory leaks', async () => {
+    // Create and disconnect 1000 subscriptions
+    for (let i = 0; i < 1000; i++) {
+      const ws = new WebSocket(`ws://localhost:${port}`);
+      await new Promise<void>((resolve) => ws.once('open', resolve));
+      ws.send(JSON.stringify({ type: 'subscribe_activity', marketId: `market-${i}` }));
+      await new Promise((r) => setImmediate(r));
+      ws.close();
+      await new Promise((r) => setImmediate(r));
+    }
+
+    // All subscription sets should be cleaned up
+    expect(feed['subscriptions'].size).toBe(0);
+  });

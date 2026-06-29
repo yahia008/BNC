@@ -67,8 +67,11 @@ export class ActivityFeed {
   }
 
   private removeSocket(ws: WebSocket): void {
-    for (const sockets of this.subscriptions.values()) {
+    for (const [marketId, sockets] of this.subscriptions.entries()) {
       sockets.delete(ws);
+      if (sockets.size === 0) {
+        this.subscriptions.delete(marketId);
+      }
     }
   }
 
