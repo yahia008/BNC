@@ -1,8 +1,11 @@
 import { rpc, scValToNative } from '@stellar/stellar-sdk';
 import { getCursor, saveCursor, upsertInvoice } from './db';
 import dotenv from 'dotenv';
+import pino from 'pino';
 
 dotenv.config();
+
+const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 const RPC_URL = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = process.env.INVOICE_CONTRACT_ID || 'C_MOCK_INVOICE_CONTRACT_ID'; // Replace with real one
@@ -10,7 +13,7 @@ const CONTRACT_ID = process.env.INVOICE_CONTRACT_ID || 'C_MOCK_INVOICE_CONTRACT_
 const server = new rpc.Server(RPC_URL);
 
 export async function pollEvents() {
-  console.log('Started polling Horizon for contract events...');
+  logger.info({ contract_id: CONTRACT_ID }, 'Started polling Horizon for contract events...');
 
   let cursor = (await getCursor()) || '';
 
@@ -52,7 +55,7 @@ export async function pollEvents() {
         await saveCursor(cursor);
       }
     } catch (err) {
-      console.error('Error fetching events:', err);
+      logger.error({ err }, 'Error fetching events');
     }
   }, 5000); // Poll every 5 seconds
 }
@@ -62,7 +65,7 @@ async function getLatestLedger(): Promise<number> {
     const health = await server.getLatestLedger();
     return health.sequence;
   } catch (err) {
-    console.error('Could not get latest ledger', err);
+    logger.error({ err }, 'Could not get latest ledger');
     return 1;
   }
 }
@@ -95,30 +98,30 @@ export function processEvent(event: rpc.Api.EventResponse) {
         due_date: data.dueDate || new Date().toISOString(),
         status: 'Pending'
       });
-      console.log(`Processed submitted event for invoice ${data.id}`);
+      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id }, 'Processed submitted event');
     } else if (eventType === 'funded') {
       upsertInvoice({
         id: data.id || data,
         freelancer: '', payer: '', amount: 0, due_date: '',
         status: 'Funded'
       });
-      console.log(`Processed funded event for invoice ${data.id || data}`);
+      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id || data }, 'Processed funded event');
     } else if (eventType === 'paid') {
       upsertInvoice({
         id: data.id || data,
         freelancer: '', payer: '', amount: 0, due_date: '',
         status: 'Paid'
       });
-      console.log(`Processed paid event for invoice ${data.id || data}`);
+      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id || data }, 'Processed paid event');
     } else if (eventType === 'defaulted') {
       upsertInvoice({
         id: data.id || data,
         freelancer: '', payer: '', amount: 0, due_date: '',
         status: 'Defaulted'
       });
-      console.log(`Processed defaulted event for invoice ${data.id || data}`);
+      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id || data }, 'Processed defaulted event');
     }
   } catch (err) {
-    console.error(`Failed to process event ${event.id}:`, err);
+    logger.error({ err, event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, event_id: event.id }, 'Failed to process event');
   }
 }
