@@ -178,6 +178,7 @@ impl Market {
     /// # Errors
     /// - `MarketNotOpen`: Market is not open or fight is in the past
     /// - `InvalidTimeRange`: Betting window has not opened or deadline is invalid
+    /// - `InvalidAmount`: Bet amount must be positive and non-zero
     /// - `BetTooLow`: Bet amount is below minimum
     /// - `BetTooLarge`: Bet amount exceeds maximum
     ///
@@ -208,6 +209,9 @@ impl Market {
             return Err(ContractError::BettingClosed);
         }
 
+        if amount <= 0 {
+            return Err(ContractError::InvalidAmount);
+        }
         if amount < state.config.min_bet_amount {
             return Err(ContractError::BelowMinimum);
         }
@@ -717,7 +721,20 @@ impl Market {
             .get(&FACTORY)
             .ok_or(ContractError::NotFactory)?;
         if admin != factory {
-              return Err(ContractError::NotAdmin);
+            return Err(ContractError::NotAdmin);
+        }
+
+        let mut state = Self::load_state(&env)?;
+        if state.status != MarketStatus::Disputed {
+            return Err(ContractError::InvalidMarketStatus);
+        }
+
+        state.status = MarketStatus::Resolved;
+        state.outcome = OptionalOutcome::Some(final_outcome.clone());
+        state.oracle_used = OptionalOracleRole::Some(OracleRole::Admin);
+        Self::save_state(&env, &state);
+
+        boxmeout_shared::emit_market_resolved(&env, state.market_id, final_outcome, admin);
         Ok(())
     }
 
