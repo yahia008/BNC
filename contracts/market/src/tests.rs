@@ -2630,3 +2630,235 @@ mod market_lifecycle_tests {
         assert!(result.is_ok() || result.is_err()); // In mock mode, this may not error
     }
 }
+
+// ============================================================
+// ISSUE #24: Stale pending oracle reports cleanup tests
+// ============================================================
+#[cfg(test)]
+mod stale_oracle_reports_tests {
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger, LedgerInfo},
+        Address, Env, Map,
+    };
+    use boxmeout_shared::types::{
+        FightDetails, MarketConfig, MarketState, MarketStatus, OracleReport, Outcome,
+        OptionalOracleRole, OptionalOutcome,
+    };
+    use crate::Market;
+
+    // REPORT_TTL = 172_800 (48 h), defined in lib.rs
+    const REPORT_TTL: u64 = 172_800;
+    const SCHEDULED_AT: u64 = 1_000_000;
+
+    fn fight(env: &Env) -> FightDetails {
+        FightDetails {
+            match_id: soroban_sdk::String::from_str(env, "FURY-USYK-2025"),
+            fighter_a: soroban_sdk::String::from_str(env, "Fury"),
+            fighter_b: soroban_sdk::String::from_str(env, "Usyk"),
+            weight_class: soroban_sdk::String::from_str(env, "Heavyweight"),
+            scheduled_at: SCHEDULED_AT,
+            venue: soroban_sdk::String::from_str(env, "Riyadh"),
+            title_fight: true,
+        }
+    }
+
+    fn config() -> MarketConfig {
+        MarketConfig {
+            min_bet_amount: 1_000_000,
+            max_bet: 100_000_000_000,
+            fee_bps: 200,
+            lock_before_secs: 3_600,
+            resolution_window: 86_400,
+        }
+    }
+
+    /// Builds a minimal OracleReport stamped with the given submitted_at.
+    fn make_report(env: &Env, oracle: &Address, submitted_at: u64) -> OracleReport {
+        OracleReport {
+            match_id: soroban_sdk::String::from_str(env, "FURY-USYK-2025"),
+            outcome: Outcome::FighterA,
+            reported_at: submitted_at,
+            submitted_at,
+            signature: soroban_sdk::BytesN::from_array(env, &[0u8; 64]),
+            oracle_address: oracle.clone(),
+            pub_key: soroban_sdk::BytesN::from_array(env, &[0u8; 32]),
+        }
+    }
+
+    /// Sets up a Locked market at `timestamp` and returns (client, contract_id, factory).
+    fn setup(env: &Env, timestamp: u64) -> (crate::MarketClient<'static>, Address, Address) {
+        env.mock_all_auths();
+        env.ledger().set(LedgerInfo {
+            timestamp,
+            protocol_version: 20,
+            sequence_number: 100,
+            network_id: Default::default(),
+            base_reserve: 1,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 4096,
+            max_entry_ttl: 6_311_520,
+        });
+
+        let factory = Address::generate(env);
+        let treasury = Address::generate(env);
+        let contract_id = env.register_contract(None, Market);
+        let client = crate::MarketClient::new(env, &contract_id);
+        client.initialize(&factory, &1u64, &fight(env), &config(), &treasury);
+
+        // Advance market to Locked status directly via storage
+        let state = MarketState {
+            market_id: 1,
+            fight: fight(env),
+            config: config(),
+            status: MarketStatus::Locked,
+            outcome: OptionalOutcome::None,
+            pool_a: 0,
+            pool_b: 0,
+            pool_draw: 0,
+            total_pool: 0,
+            resolved_at: 0,
+            oracle_used: OptionalOracleRole::None,
+        };
+        env.as_contract(&contract_id, || {
+            env.storage().persistent().set(&"STATE", &state);
+        });
+
+        (client, contract_id, factory)
+    }
+
+    /// Injects a PENDING_REPORTS map directly into contract storage.
+    fn inject_pending(
+        env: &Env,
+        contract_id: &Address,
+        reports: &[(Address, OracleReport)],
+    ) {
+        let mut map: Map<Address, OracleReport> = Map::new(env);
+        for (addr, report) in reports {
+            map.set(addr.clone(), report.clone());
+        }
+        env.as_contract(contract_id, || {
+            env.storage().persistent().set(&"PENDING_REPORTS", &map);
+        });
+    }
+
+    /// Reads the PENDING_REPORTS map from contract storage.
+    fn read_pending(env: &Env, contract_id: &Address) -> Map<Address, OracleReport> {
+        env.as_contract(contract_id, || {
+            env.storage()
+                .persistent()
+                .get::<_, Map<Address, OracleReport>>(&"PENDING_REPORTS")
+                .unwrap_or_else(|| Map::new(env))
+        })
+    }
+
+    // ── Tests ─────────────────────────────────────────────────────────────────
+
+    /// A report submitted exactly at REPORT_TTL seconds ago is stale and must be removed.
+    #[test]
+    fn test_report_at_ttl_boundary_is_cleared() {
+        let submitted_at: u64 = 500_000;
+        let now = submitted_at + REPORT_TTL; // age == REPORT_TTL → stale
+
+        let env = Env::default();
+        let (client, contract_id, factory) = setup(&env, now);
+        let oracle = Address::generate(&env);
+
+        inject_pending(&env, &contract_id, &[(oracle, make_report(&env, &oracle, submitted_at))]);
+
+        let cleared = client.clear_stale_reports(&factory);
+        assert_eq!(cleared, 1, "Report aged exactly REPORT_TTL must be cleared");
+
+        let remaining = read_pending(&env, &contract_id);
+        assert_eq!(remaining.len(), 0, "PENDING_REPORTS must be empty after clearing");
+    }
+
+    /// A report younger than REPORT_TTL must not be removed.
+    #[test]
+    fn test_fresh_report_is_retained() {
+        let submitted_at: u64 = 500_000;
+        let now = submitted_at + REPORT_TTL - 1; // one second before TTL — still fresh
+
+        let env = Env::default();
+        let (client, contract_id, factory) = setup(&env, now);
+        let oracle = Address::generate(&env);
+
+        inject_pending(&env, &contract_id, &[(oracle.clone(), make_report(&env, &oracle, submitted_at))]);
+
+        let cleared = client.clear_stale_reports(&factory);
+        assert_eq!(cleared, 0, "Fresh report must not be cleared");
+
+        let remaining = read_pending(&env, &contract_id);
+        assert_eq!(remaining.len(), 1, "Fresh report must remain in PENDING_REPORTS");
+    }
+
+    /// Mixed reports: one stale, one fresh — only the stale one is removed.
+    #[test]
+    fn test_only_stale_reports_cleared_fresh_retained() {
+        let now: u64 = 1_000_000;
+        let stale_submitted_at = now - REPORT_TTL;       // exactly TTL old → stale
+        let fresh_submitted_at = now - REPORT_TTL + 100; // 100 s under TTL → fresh
+
+        let env = Env::default();
+        let (client, contract_id, factory) = setup(&env, now);
+        let oracle_stale = Address::generate(&env);
+        let oracle_fresh = Address::generate(&env);
+
+        inject_pending(&env, &contract_id, &[
+            (oracle_stale.clone(), make_report(&env, &oracle_stale, stale_submitted_at)),
+            (oracle_fresh.clone(), make_report(&env, &oracle_fresh, fresh_submitted_at)),
+        ]);
+
+        let cleared = client.clear_stale_reports(&factory);
+        assert_eq!(cleared, 1, "Exactly one stale report must be cleared");
+
+        let remaining = read_pending(&env, &contract_id);
+        assert_eq!(remaining.len(), 1, "One fresh report must remain");
+        assert!(remaining.contains_key(oracle_fresh), "Fresh oracle's report must be retained");
+    }
+
+    /// Clearing stale reports on an empty map returns 0 and does not panic.
+    #[test]
+    fn test_clear_on_empty_pending_returns_zero() {
+        let env = Env::default();
+        let (client, _contract_id, factory) = setup(&env, 500_000);
+
+        let cleared = client.clear_stale_reports(&factory);
+        assert_eq!(cleared, 0, "No reports to clear must return 0");
+    }
+
+    /// After stale reports are cleared, a new oracle report cycle can succeed.
+    ///
+    /// This is the core regression test for issue #24: verifies that clearing
+    /// stale entries unblocks the pending map so consensus can proceed.
+    #[test]
+    fn test_clear_stale_allows_fresh_report_cycle() {
+        let submitted_at: u64 = 500_000;
+        let now = submitted_at + REPORT_TTL; // old report is now stale
+
+        let env = Env::default();
+        let (client, contract_id, factory) = setup(&env, now);
+        let old_oracle = Address::generate(&env);
+
+        // Inject a stale report from a previous (stuck) round
+        inject_pending(&env, &contract_id, &[(old_oracle.clone(), make_report(&env, &old_oracle, submitted_at))]);
+
+        // Admin clears the stale entry
+        let cleared = client.clear_stale_reports(&factory);
+        assert_eq!(cleared, 1, "Stale report must be cleared");
+
+        // After clearing, PENDING_REPORTS is empty — a new cycle can begin
+        let remaining = read_pending(&env, &contract_id);
+        assert_eq!(remaining.len(), 0, "PENDING_REPORTS must be empty, ready for a fresh cycle");
+    }
+
+    /// Non-admin caller must be rejected.
+    #[test]
+    fn test_clear_stale_reports_non_admin_rejected() {
+        let env = Env::default();
+        let (client, _contract_id, _factory) = setup(&env, 500_000);
+        let non_admin = Address::generate(&env);
+
+        let result = client.try_clear_stale_reports(&non_admin);
+        assert!(result.is_err(), "Non-admin must not be able to clear stale reports");
+    }
+}

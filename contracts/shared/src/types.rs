@@ -174,6 +174,9 @@ pub struct OracleReport {
     pub outcome: Outcome,
     /// Unix timestamp when the oracle submitted this report
     pub reported_at: u64,
+    /// Ledger timestamp when the report was stored on-chain (set by the contract).
+    /// Used by clear_stale_reports to evict partial reports older than REPORT_TTL.
+    pub submitted_at: u64,
     /// Ed25519 signature over concat(match_id_bytes, outcome_byte, reported_at_be)
     pub signature: BytesN<64>,
     /// Stellar address corresponding to the oracle signing keypair
