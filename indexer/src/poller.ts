@@ -1,26 +1,25 @@
 import { rpc, scValToNative } from '@stellar/stellar-sdk';
-import { getCursor, saveCursor, upsertInvoice } from './db';
+import { getCursor, saveCursor } from './db';
 import dotenv from 'dotenv';
-import pino from 'pino';
+import { RawStellarEvent, StellarEventProcessor } from '../../backend/src/indexer/EventProcessor';
 
 dotenv.config();
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
 const RPC_URL = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
-const CONTRACT_ID = process.env.INVOICE_CONTRACT_ID || 'C_MOCK_INVOICE_CONTRACT_ID'; // Replace with real one
+const CONTRACT_ID = process.env.INVOICE_CONTRACT_ID || 'C_MOCK_INVOICE_CONTRACT_ID';
 
 const server = new rpc.Server(RPC_URL);
+const eventProcessor = new StellarEventProcessor();
 
 export async function pollEvents() {
   logger.info({ contract_id: CONTRACT_ID }, 'Started polling Horizon for contract events...');
 
   let cursor = (await getCursor()) || '';
 
-  // Polling loop
   setInterval(async () => {
     try {
-      // Soroban getEvents requests
       const request: rpc.Api.GetEventsRequest = cursor
         ? {
             cursor,
@@ -49,7 +48,7 @@ export async function pollEvents() {
 
       if (response.events && response.events.length > 0) {
         for (const event of response.events) {
-          processEvent(event);
+          await processEvent(event);
         }
         cursor = response.cursor;
         await saveCursor(cursor);
@@ -57,7 +56,7 @@ export async function pollEvents() {
     } catch (err) {
       logger.error({ err }, 'Error fetching events');
     }
-  }, 5000); // Poll every 5 seconds
+  }, 5000);
 }
 
 async function getLatestLedger(): Promise<number> {
@@ -70,58 +69,33 @@ async function getLatestLedger(): Promise<number> {
   }
 }
 
-export function processEvent(event: rpc.Api.EventResponse) {
-  // Topics are scVals, typically symbol strings
-  const topics = event.topic.map(t => {
-    try {
-      return scValToNative(t);
-    } catch {
-      return null;
-    }
-  });
-
-  const eventType = topics[0]; // e.g. 'submitted', 'funded', 'paid', 'defaulted'
-  if (!eventType) return;
-
+async function processEvent(event: rpc.Api.EventResponse) {
   try {
+    const topics = event.topic.map(t => {
+      try {
+        return scValToNative(t);
+      } catch {
+        return null;
+      }
+    });
+
+    const eventType = topics[0];
+    if (!eventType) return;
+
     const data = scValToNative(event.value);
-    
-    // Assume data contains { id, freelancer, payer, amount, dueDate } for 'submitted'
-    // and just { id } for status changes. This is dependent on contract implementation.
-    
-    if (eventType === 'submitted') {
-      upsertInvoice({
-        id: data.id,
-        freelancer: data.freelancer || '',
-        payer: data.payer || '',
-        amount: data.amount || 0,
-        due_date: data.dueDate || new Date().toISOString(),
-        status: 'Pending'
-      });
-      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id }, 'Processed submitted event');
-    } else if (eventType === 'funded') {
-      upsertInvoice({
-        id: data.id || data,
-        freelancer: '', payer: '', amount: 0, due_date: '',
-        status: 'Funded'
-      });
-      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id || data }, 'Processed funded event');
-    } else if (eventType === 'paid') {
-      upsertInvoice({
-        id: data.id || data,
-        freelancer: '', payer: '', amount: 0, due_date: '',
-        status: 'Paid'
-      });
-      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id || data }, 'Processed paid event');
-    } else if (eventType === 'defaulted') {
-      upsertInvoice({
-        id: data.id || data,
-        freelancer: '', payer: '', amount: 0, due_date: '',
-        status: 'Defaulted'
-      });
-      logger.info({ event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, invoice_id: data.id || data }, 'Processed defaulted event');
-    }
+
+    const rawEvent: RawStellarEvent = {
+      contract_address: typeof event.contractId === 'string' ? event.contractId : event.contractId?.toString() || '',
+      event_type: String(eventType),
+      topics: topics.map(t => String(t ?? '')),
+      data: JSON.stringify(data),
+      ledger_sequence: event.ledger,
+      ledger_close_time: event.ledgerClosedAt,
+      tx_hash: event.txHash
+    };
+
+    await eventProcessor.process(rawEvent);
   } catch (err) {
-    logger.error({ err, event_type: eventType, contract_id: CONTRACT_ID, ledger_sequence: event.ledger, event_id: event.id }, 'Failed to process event');
+    console.error(`Failed to process event:`, err);
   }
 }

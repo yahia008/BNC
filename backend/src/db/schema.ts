@@ -64,6 +64,7 @@ export const bets = pgTable(
   (table) => ({
     market_id_idx: index('bets_market_id_idx').on(table.market_id),
     bettor_address_idx: index('bets_bettor_address_idx').on(table.bettor_address),
+    market_id_claimed_idx: index('bets_market_id_claimed_idx').on(table.market_id, table.claimed),
     tx_hash_idx: uniqueIndex('bets_tx_hash_idx').on(table.tx_hash),
   }),
 );
@@ -199,6 +200,30 @@ export const distributions = pgTable(
   }),
 );
 
+export const shares = pgTable(
+  'shares',
+  {
+    id: serial('id').primaryKey(),
+    user_id: text('user_id').notNull(),
+    market_id: text('market_id').notNull().references(() => markets.market_id),
+    outcome_id: integer('outcome_id').notNull(),
+    quantity: numeric('quantity').notNull(),
+    cost_basis: numeric('cost_basis').notNull(),
+    realized_pnl: numeric('realized_pnl').default('0'),
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => ({
+    user_id_idx: index('shares_user_id_idx').on(table.user_id),
+    market_id_idx: index('shares_market_id_idx').on(table.market_id),
+    user_market_outcome_idx: uniqueIndex('shares_user_market_outcome_idx').on(
+      table.user_id,
+      table.market_id,
+      table.outcome_id
+    ),
+  }),
+);
+
 export type Market = typeof markets.$inferSelect;
 export type NewMarket = typeof markets.$inferInsert;
 export type Bet = typeof bets.$inferSelect;
@@ -212,3 +237,5 @@ export type UserSession = typeof user_sessions.$inferSelect;
 export type PasswordResetToken = typeof password_reset_tokens.$inferSelect;
 export type Distribution = typeof distributions.$inferSelect;
 export type NewDistribution = typeof distributions.$inferInsert;
+export type Share = typeof shares.$inferSelect;
+export type NewShare = typeof shares.$inferInsert;

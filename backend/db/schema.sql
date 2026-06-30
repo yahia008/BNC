@@ -38,6 +38,12 @@ CREATE TABLE IF NOT EXISTS bets (
   ledger_sequence  INTEGER     NOT NULL DEFAULT 0
 );
 
+-- Indexes for bets table
+CREATE INDEX IF NOT EXISTS bets_market_id_idx ON bets(market_id);
+CREATE INDEX IF NOT EXISTS bets_bettor_address_idx ON bets(bettor_address);
+CREATE INDEX IF NOT EXISTS bets_market_id_claimed_idx ON bets(market_id, claimed);
+CREATE UNIQUE INDEX IF NOT EXISTS bets_tx_hash_idx ON bets(tx_hash);
+
 CREATE TABLE IF NOT EXISTS blockchain_events (
   id                SERIAL PRIMARY KEY,
   contract_address  TEXT        NOT NULL,
