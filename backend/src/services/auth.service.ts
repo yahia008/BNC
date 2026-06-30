@@ -8,17 +8,16 @@ import { generateSecret, generateQRCode, verifyToken } from './totp.service';
 import { sendPasswordResetEmail, sendEmail } from './email.service';
 import { redis } from './cache.service';
 import { pool } from '../config/db';
+import { getEnv } from '../config/env';
 import { password_reset_tokens } from '../db/schema';
 import { AppError } from '../utils/AppError';
 import { logger } from '../utils/logger';
 
-const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-jwt-secret-change-me';
-const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? '15m';
-const REFRESH_EXPIRES_IN = process.env.REFRESH_EXPIRES_IN ?? '7d';
-const TEMP_TOKEN_EXPIRES_IN = '5m';
-const RESET_TOKEN_EXPIRES_IN = '15m';
-const BCRYPT_ROUNDS = 12;
-const VERIFY_EMAIL_URL = process.env.VERIFY_EMAIL_URL ?? 'http://localhost:3001/auth/verify-email';
+const env = getEnv();
+const JWT_SECRET = env.JWT_SECRET;
+const JWT_EXPIRES_IN = env.JWT_EXPIRES_IN || '15m';
+const REFRESH_EXPIRES_IN = env.REFRESH_EXPIRES_IN || '7d';
+const VERIFY_EMAIL_URL = env.VERIFY_EMAIL_URL || 'http://localhost:3001/auth/verify-email';
 
 async function generateEmailVerificationToken(userId: string): Promise<string> {
   const token = randomUUID();
@@ -55,6 +54,7 @@ interface UserRecord {
   emailVerificationToken?: string; // UUID stored in Redis
   twoFactorSecret?: string;   // AES-GCM encrypted base32 secret
   twoFactorEnabled: boolean;
+  role?: 'admin' | 'user';
   /**
    * Monotonically increasing version number.
    * Stored inside every issued access/refresh token.
@@ -70,9 +70,9 @@ const db = drizzle(pool);
 // ---------------------------------------------------------------------------
 // JWT helpers
 // ---------------------------------------------------------------------------
-function signAccess(userId: string, sessionVersion: number): string {
+function signAccess(userId: string, sessionVersion: number, role?: string): string {
   return jwt.sign(
-    { sub: userId, type: 'access', sv: sessionVersion },
+    { sub: userId, type: 'access', sv: sessionVersion, ...(role && { role }) },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions,
   );
@@ -212,7 +212,7 @@ export async function login(
   }
 
   return {
-    accessToken: signAccess(user.id, user.sessionVersion),
+    accessToken: signAccess(user.id, user.sessionVersion, user.role === 'admin' ? 'admin' : undefined),
     refreshToken: signRefresh(user.id, user.sessionVersion),
   };
 }
@@ -375,7 +375,7 @@ export async function verify2FA(
   if (!verifyToken(secret, otp)) throw new AppError(401, 'Invalid or expired OTP');
 
   return {
-    accessToken: signAccess(userId, user.sessionVersion),
+    accessToken: signAccess(userId, user.sessionVersion, user.role === 'admin' ? 'admin' : undefined),
     refreshToken: signRefresh(userId, user.sessionVersion),
   };
 }
