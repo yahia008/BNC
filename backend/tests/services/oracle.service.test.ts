@@ -418,6 +418,113 @@ describe('OracleService', () => {
     });
   });
 
+  describe('runAutoResolutionJob — per-market isolation', () => {
+    beforeEach(() => {
+      process.env.BOXING_API_URL = 'http://mock-boxing-api';
+      process.env.BOXING_API_KEY = 'mock-key';
+    });
+
+    afterEach(() => {
+      delete process.env.BOXING_API_URL;
+      delete process.env.BOXING_API_KEY;
+    });
+
+    it('processes market 2 even when market 1 throws', async () => {
+      const market1 = { market_id: 'market-1', match_id: 'match-1' };
+      const market2 = { market_id: 'market-2', match_id: 'match-2' };
+
+      // First call: query markets list
+      (pool.query as jest.Mock).mockResolvedValueOnce({
+        rowCount: 2,
+        rows: [market1, market2],
+      });
+
+      // market-1: fetch throws (e.g. RPC timeout)
+      // market-2: fetch returns a confirmed result
+      mockFetch
+        .mockRejectedValueOnce(new Error('RPC timeout for market-1'))
+        // market-2 primary fetch
+        .mockResolvedValueOnce({
+          status: 200,
+          ok: true,
+          json: async () => ({
+            fights: [{ fight_id: 'match-2', status: 'confirmed', result: 'fighter_b' }],
+          }),
+        })
+        // market-2 alert webhook (if triggered) — not expected here but guard
+        .mockResolvedValue({
+          status: 200,
+          ok: true,
+          json: async () => ({ fights: [] }),
+        });
+
+      // market-2: submitFightResult DB calls — insert oracle_report, select contract, update report
+      const market2InsertResult = {
+        rowCount: 1,
+        rows: [{ id: 2, match_id: 'match-2', oracle_address: mockOracleAddress, outcome: 'fighter_b', reported_at: new Date(), signature: 'sig-2', accepted: false, tx_hash: null, created_at: new Date() }],
+      };
+      const market2SelectResult = { rowCount: 1, rows: [{ contract_address: 'contract-2' }] };
+      const market2UpdateResult = {
+        rowCount: 1,
+        rows: [{ id: 2, match_id: 'match-2', accepted: true, tx_hash: 'tx-market-2' }],
+      };
+
+      (pool.query as jest.Mock)
+        .mockResolvedValueOnce(market2InsertResult)
+        .mockResolvedValueOnce(market2SelectResult)
+        .mockResolvedValueOnce(market2UpdateResult);
+
+      (StellarService.invokeContract as jest.Mock).mockResolvedValue('tx-market-2');
+
+      const stats = await OracleService.runAutoResolutionJob();
+
+      // market-1 failed but market-2 resolved — batch was NOT aborted
+      expect(stats.failed).toBe(1);
+      expect(stats.resolved).toBe(1);
+      expect(StellarService.invokeContract).toHaveBeenCalledWith(
+        'contract-2',
+        'resolve_market',
+        expect.any(Array),
+      );
+    });
+
+    it('logs market_id and error details for each failed market', async () => {
+      const market1 = { market_id: 'market-err-1', match_id: 'match-err-1' };
+
+      (pool.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1, rows: [market1] });
+      mockFetch.mockRejectedValueOnce(new Error('contract error: insufficient funds'));
+
+      const stats = await OracleService.runAutoResolutionJob();
+
+      expect(stats.failed).toBe(1);
+      expect(stats.resolved).toBe(0);
+    });
+
+    it('sends alert after 3 consecutive failures for the same market', async () => {
+      const market1 = { market_id: 'market-alert', match_id: 'match-alert' };
+
+      (pool.query as jest.Mock).mockResolvedValueOnce({ rowCount: 1, rows: [market1] });
+      mockFetch.mockRejectedValueOnce(new Error('RPC timeout'));
+
+      mockRedisIncr.mockResolvedValue(3);
+      mockRedisGet.mockResolvedValue(null);
+
+      process.env.ALERT_WEBHOOK_URL = 'http://mock-webhook';
+
+      // second mockFetch call will be the alert webhook POST
+      mockFetch.mockResolvedValueOnce({ status: 200, ok: true, json: async () => ({}) });
+
+      await OracleService.runAutoResolutionJob();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'http://mock-webhook',
+        expect.objectContaining({ method: 'POST' }),
+      );
+
+      delete process.env.ALERT_WEBHOOK_URL;
+    });
+  });
+
   describe('getOraclePublicKey', () => {
     it('should return oracle public key', () => {
       const publicKey = OracleService.getOraclePublicKey();

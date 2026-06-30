@@ -22,10 +22,17 @@ export function startAutoResolutionCron(): void {
     logger.info('autoResolutionJob: starting');
 
     try {
-      await runAutoResolutionJob();
-      logger.info('autoResolutionJob: completed');
+      // runAutoResolutionJob processes each market in an independent try/catch loop.
+      // A failure in one market (RPC timeout, contract error) is caught per-market,
+      // logged with market_id + error details, and the batch continues — subsequent
+      // markets are always processed regardless of earlier failures.
+      // After FAILURE_THRESHOLD consecutive failures for the same market, an alert is sent.
+      const stats = await runAutoResolutionJob();
+      logger.info(stats, 'autoResolutionJob: completed');
     } catch (err) {
-      logger.error({ err }, 'autoResolutionJob: failed');
+      // Top-level catch handles fatal errors (e.g. DB unavailable before any market is queried).
+      // Individual market failures are handled inside runAutoResolutionJob and never propagate here.
+      logger.error({ err }, 'autoResolutionJob: fatal error, batch aborted');
     } finally {
       isResolutionRunning = false;
     }
