@@ -418,6 +418,45 @@ describe('OracleService', () => {
     });
   });
 
+  describe('fetchExternalFightResult', () => {
+    beforeEach(() => {
+      process.env.BOXING_API_URL = 'http://mock-boxing-api';
+      process.env.BOXING_API_KEY = 'mock-key';
+    });
+
+    afterEach(() => {
+      delete process.env.BOXING_API_URL;
+      delete process.env.BOXING_API_KEY;
+    });
+
+    it('should throw on malformed API response', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        json: async () => ({ invalid: true }),
+      });
+
+      await expect(OracleService.fetchExternalFightResult(mockMatchId)).rejects.toThrow(
+        'Boxing API returned malformed response',
+      );
+    });
+
+    it('should return outcome for confirmed fight with valid response', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        json: async () => ({
+          fights: [
+            { fight_id: mockMatchId, status: 'confirmed', result: mockOutcome },
+          ],
+        }),
+      });
+
+      const result = await OracleService.fetchExternalFightResult(mockMatchId);
+      expect(result).toBe(mockOutcome);
+    });
+  });
+
   describe('getOraclePublicKey', () => {
     it('should return oracle public key', () => {
       const publicKey = OracleService.getOraclePublicKey();

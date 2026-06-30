@@ -59,6 +59,7 @@ export function MarketFilters({ onChange }: Readonly<MarketFiltersProps>): JSX.E
 
   const [searchInput, setSearchInput] = useState(searchParam);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusTabsRef = useRef<HTMLDivElement>(null);
 
   const setParam = useCallback(
     (updates: Record<string, string | null>) => {
@@ -92,6 +93,24 @@ export function MarketFilters({ onChange }: Readonly<MarketFiltersProps>): JSX.E
     onChange?.({ status, search: searchParam, sort, weightClass });
   }, [status, searchParam, sort, weightClass, onChange]);
 
+  const handleStatusKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const tabs = Array.from(statusTabsRef.current?.querySelectorAll('[role="tab"]') ?? []) as HTMLElement[];
+    const currentIndex = tabs.findIndex((tab) => tab === document.activeElement);
+
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const direction = e.key === 'ArrowRight' ? 1 : -1;
+      const nextIndex = (currentIndex + direction + tabs.length) % tabs.length;
+      tabs[nextIndex]?.focus();
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      tabs[0]?.focus();
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      tabs[tabs.length - 1]?.focus();
+    }
+  };
+
   return (
     <div className="flex flex-wrap gap-3 items-center">
       {/* Weight class dropdown */}
@@ -108,12 +127,22 @@ export function MarketFilters({ onChange }: Readonly<MarketFiltersProps>): JSX.E
       </select>
 
       {/* Status tabs */}
-      <div className="flex rounded-lg overflow-hidden border border-gray-700">
+      <div
+        ref={statusTabsRef}
+        role="tablist"
+        aria-label="Filter by market status"
+        className="flex rounded-lg overflow-hidden border border-gray-700"
+        onKeyDown={handleStatusKeyDown}
+      >
         {STATUS_TABS.map((tab) => (
           <button
             key={tab.value}
+            role="tab"
+            aria-selected={status === tab.value}
+            aria-label={`Filter by ${tab.label} status`}
+            tabIndex={status === tab.value ? 0 : -1}
             onClick={() => setParam({ status: tab.value || null })}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
+            className={`px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-inset ${
               status === tab.value
                 ? 'bg-amber-500 text-black'
                 : 'bg-gray-800 text-gray-300 hover:bg-gray-700'

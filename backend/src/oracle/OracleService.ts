@@ -12,6 +12,7 @@ import { logger } from '../utils/logger';
 import { cacheGet, cacheSet, redis } from '../services/cache.service';
 import type { OracleReport } from '../models/OracleReport';
 import type { Market } from '../models/Market';
+import { boxingApiResponseSchema } from '../schemas/validation.schemas';
 
 export type FightOutcome = 'fighter_a' | 'fighter_b' | 'draw' | 'no_contest';
 
@@ -244,7 +245,12 @@ export async function fetchExternalFightResult(match_id: string): Promise<FightO
       throw new Error(`Boxing API responded ${response.status} for match_id=${match_id}`);
     }
 
-    const body = (await response.json()) as BoxingApiResponse;
+    const rawBody = await response.json();
+    const parsed = boxingApiResponseSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      throw new Error(`Boxing API returned malformed response for match_id=${match_id}: ${parsed.error.message}`);
+    }
+    const body = parsed.data;
     const fight = body.fights?.find((f) => f.fight_id === match_id);
 
     if (!fight) {
@@ -337,7 +343,12 @@ export async function fetchFallbackResult(match_id: string): Promise<FightOutcom
       throw new Error(`Fallback boxing API responded ${response.status} for match_id=${match_id}`);
     }
 
-    const body = (await response.json()) as BoxingApiResponse;
+    const rawBody = await response.json();
+    const parsed = boxingApiResponseSchema.safeParse(rawBody);
+    if (!parsed.success) {
+      throw new Error(`Fallback API returned malformed response for match_id=${match_id}: ${parsed.error.message}`);
+    }
+    const body = parsed.data;
     const fight = body.fights?.find((f) => f.fight_id === match_id);
 
     if (!fight) {

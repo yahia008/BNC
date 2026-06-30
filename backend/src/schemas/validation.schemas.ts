@@ -167,6 +167,18 @@ export const resolveDisputeBody = z
     { message: 'New winning outcome is required when action is RESOLVE_NEW_OUTCOME', path: ['newWinningOutcome'] },
   );
 
+// --- Boxing API schemas ---
+
+export const boxingApiFightSchema = z.object({
+  fight_id: z.string(),
+  status: z.string(),
+  result: z.string().optional(),
+});
+
+export const boxingApiResponseSchema = z.object({
+  fights: z.array(boxingApiFightSchema),
+});
+
 // --- Bet / trading schemas ---
 
 export const buySharesBody = z.object({
