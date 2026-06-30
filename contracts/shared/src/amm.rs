@@ -187,14 +187,6 @@ fn isqrt(n: i128) -> i128 {
 ///
 /// # Returns
 /// The largest collateral_in such that target_reserve_after >= 1
-///
-/// # Formula
-/// Using constant product AMM: reserve * balance = k (constant)
-/// After trade: (reserve - collateral_in) * (balance + shares_out) = k
-/// Solving for max collateral_in where reserve_after = 1:
-/// (1) * (balance + shares_out) = reserve * balance
-/// shares_out = reserve * balance - balance
-/// collateral_in = reserve - 1
 pub fn calc_max_trade(reserve: i128, _balance: i128) -> i128 {
     if reserve <= 1 {
         return 0;
