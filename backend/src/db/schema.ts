@@ -150,11 +150,30 @@ export const disputes = pgTable(
   }),
 );
 
+export const users = pgTable(
+  'users',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull().unique(),
+    password_hash: text('password_hash').notNull(),
+    email_verified: boolean('email_verified').default(false),
+    two_factor_enabled: boolean('two_factor_enabled').default(false),
+    two_factor_secret: text('two_factor_secret'), // AES-GCM encrypted
+    role: text('role').default('user'), // 'user' | 'admin'
+    session_version: integer('session_version').default(0),
+    created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (table) => ({
+    email_idx: uniqueIndex('users_email_idx').on(table.email),
+  }),
+);
+
 export const user_sessions = pgTable(
   'user_sessions',
   {
     id: serial('id').primaryKey(),
-    user_id: text('user_id').notNull(),
+    user_id: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
     session_token: text('session_token').notNull().unique(),
     expires_at: timestamp('expires_at', { withTimezone: true }).notNull(),
     created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
@@ -233,6 +252,8 @@ export type OracleReport = typeof oracle_reports.$inferSelect;
 export type NotificationJob = typeof notification_jobs.$inferSelect;
 export type Dispute = typeof disputes.$inferSelect;
 export type NewDispute = typeof disputes.$inferInsert;
+export type User = typeof users.$inferSelect;
+export type NewUser = typeof users.$inferInsert;
 export type UserSession = typeof user_sessions.$inferSelect;
 export type PasswordResetToken = typeof password_reset_tokens.$inferSelect;
 export type Distribution = typeof distributions.$inferSelect;

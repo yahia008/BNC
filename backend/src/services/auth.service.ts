@@ -3,13 +3,14 @@ import bcrypt from 'bcrypt';
 import { randomUUID, createHash } from 'crypto';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { eq, and } from 'drizzle-orm';
+import * as schema from '../db/schema';
 import { encrypt, decrypt } from './crypto.service';
 import { generateSecret, generateQRCode, verifyToken } from './totp.service';
 import { sendPasswordResetEmail, sendEmail } from './email.service';
 import { redis } from './cache.service';
 import { pool } from '../config/db';
 import { getEnv } from '../config/env';
-import { password_reset_tokens } from '../db/schema';
+import { password_reset_tokens, users } from '../db/schema';
 import { AppError } from '../utils/AppError';
 import { logger } from '../utils/logger';
 
@@ -18,6 +19,11 @@ const JWT_SECRET = env.JWT_SECRET;
 const JWT_EXPIRES_IN = env.JWT_EXPIRES_IN || '15m';
 const REFRESH_EXPIRES_IN = env.REFRESH_EXPIRES_IN || '7d';
 const VERIFY_EMAIL_URL = env.VERIFY_EMAIL_URL || 'http://localhost:3001/auth/verify-email';
+const TEMP_TOKEN_EXPIRES_IN = '5m';
+const RESET_TOKEN_EXPIRES_IN = '15m';
+const BCRYPT_ROUNDS = 12;
+
+const db = drizzle(pool, { schema });
 
 async function generateEmailVerificationToken(userId: string): Promise<string> {
   const token = randomUUID();
@@ -42,30 +48,6 @@ async function sendVerificationEmail(email: string, token: string, url: string):
     return false;
   }
 }
-
-// ---------------------------------------------------------------------------
-// In-memory user store — replace with DB queries in production
-// ---------------------------------------------------------------------------
-interface UserRecord {
-  id: string;
-  email: string;
-  passwordHash: string;
-  emailVerified: boolean;
-  emailVerificationToken?: string; // UUID stored in Redis
-  twoFactorSecret?: string;   // AES-GCM encrypted base32 secret
-  twoFactorEnabled: boolean;
-  role?: 'admin' | 'user';
-  /**
-   * Monotonically increasing version number.
-   * Stored inside every issued access/refresh token.
-   * Incrementing it instantly invalidates all previously issued tokens.
-   */
-  sessionVersion: number;
-}
-
-export const users = new Map<string, UserRecord>();
-
-const db = drizzle(pool);
 
 // ---------------------------------------------------------------------------
 // JWT helpers
@@ -140,9 +122,11 @@ export async function isSessionRevoked(userId: string, sessionVersion: number): 
   return val !== null;
 }
 
-export function isEmailVerified(userId: string): boolean {
-  const user = users.get(userId);
-  return !!user?.emailVerified;
+export async function isEmailVerified(userId: string): Promise<boolean> {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
+  return !!user?.email_verified;
 }
 
 // ---------------------------------------------------------------------------
@@ -158,33 +142,34 @@ export async function register(
   password: string,
 ): Promise<{ userId: string; message: string }> {
   // Check if user already exists
-  const existing = [...users.values()].find((u) => u.email === email);
+  const existing = await db.query.users.findFirst({
+    where: eq(users.email, email),
+  });
   if (existing) {
     throw new AppError(409, 'Email already registered');
   }
 
   // Create user
   const userId = randomUUID();
-  const user: UserRecord = {
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  
+  await db.insert(users).values({
     id: userId,
     email,
-    passwordHash: password, // TODO: hash with bcrypt
-    emailVerified: false,
-    twoFactorEnabled: false,
-    sessionVersion: 0,
-  };
-  users.set(userId, user);
+    password_hash: passwordHash,
+    email_verified: false,
+    two_factor_enabled: false,
+    session_version: 0,
+  });
 
-  // Generate verification token
+  // Generate verification token (stored in Redis)
   const token = await generateEmailVerificationToken(userId);
-  user.emailVerificationToken = token;
-  users.set(userId, user);
 
   // Send verification email
   const sent = await sendVerificationEmail(email, token, VERIFY_EMAIL_URL);
   if (!sent) {
     // Clean up user if email send fails
-    users.delete(userId);
+    await db.delete(users).where(eq(users.id, userId));
     throw new AppError(500, 'Failed to send verification email');
   }
 
@@ -196,24 +181,25 @@ export async function register(
   };
 }
 
-/** Stub login — replace with real password check against DB */
 export async function login(
   email: string,
   password: string,
 ): Promise<{ accessToken: string; refreshToken: string } | { requires2FA: true; tempToken: string }> {
-  const user = [...users.values()].find((u) => u.email === email);
+  const user = await db.query.users.findFirst({
+    where: eq(users.email, email),
+  });
   if (!user) throw new AppError(401, 'Invalid credentials');
 
-  const passwordValid = await bcrypt.compare(password, user.passwordHash);
+  const passwordValid = await bcrypt.compare(password, user.password_hash);
   if (!passwordValid) throw new AppError(401, 'Invalid credentials');
 
-  if (user.twoFactorEnabled) {
+  if (user.two_factor_enabled) {
     return { requires2FA: true, tempToken: signTemp(user.id) };
   }
 
   return {
-    accessToken: signAccess(user.id, user.sessionVersion, user.role === 'admin' ? 'admin' : undefined),
-    refreshToken: signRefresh(user.id, user.sessionVersion),
+    accessToken: signAccess(user.id, user.session_version, user.role === 'admin' ? 'admin' : undefined),
+    refreshToken: signRefresh(user.id, user.session_version),
   };
 }
 
@@ -228,7 +214,9 @@ export async function login(
  * to prevent user enumeration attacks.
  */
 export async function forgotPassword(email: string): Promise<void> {
-  const user = [...users.values()].find((u) => u.email === email);
+  const user = await db.query.users.findFirst({
+    where: eq(users.email, email),
+  });
 
   // No user → do nothing but don't reveal that fact to the caller
   if (!user) return;
@@ -266,7 +254,9 @@ export async function resetPassword(token: string, newPassword: string): Promise
   }
 
   const userId = payload.sub as string;
-  const user = users.get(userId);
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
   if (!user) throw new AppError(400, 'Invalid or expired reset token');
 
   const incomingHash = await sha256(token);
@@ -298,13 +288,16 @@ export async function resetPassword(token: string, newPassword: string): Promise
 
   // 5. Hash the new password
   const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-  user.passwordHash = passwordHash;
 
   // 6. Invalidate all existing sessions by bumping the session version
-  const oldVersion = user.sessionVersion;
-  user.sessionVersion = oldVersion + 1;
+  const oldVersion = user.session_version;
+  const newVersion = oldVersion + 1;
 
-  users.set(user.id, user);
+  await db.update(users).set({
+    password_hash: passwordHash,
+    session_version: newVersion,
+    updated_at: new Date(),
+  }).where(eq(users.id, userId));
 
   // 7. Write tombstones to Redis so in-flight tokens are rejected immediately
   await blockOldSessions(userId, oldVersion);
@@ -318,13 +311,19 @@ export async function resetPassword(token: string, newPassword: string): Promise
 export async function setup2FA(
   userId: string,
 ): Promise<{ qrCode: string; secret: string }> {
-  const user = users.get(userId);
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
   if (!user) throw new AppError(404, 'User not found');
-  if (user.twoFactorEnabled) throw new AppError(400, '2FA already enabled');
+  if (user.two_factor_enabled) throw new AppError(400, '2FA already enabled');
 
   const { secret, otpauthUrl } = generateSecret(user.email);
-  user.twoFactorSecret = encrypt(secret);
-  users.set(userId, user);
+  const encryptedSecret = encrypt(secret);
+  
+  await db.update(users).set({
+    two_factor_secret: encryptedSecret,
+    updated_at: new Date(),
+  }).where(eq(users.id, userId));
 
   const qrCode = await generateQRCode(otpauthUrl);
   return { qrCode, secret };
@@ -332,30 +331,38 @@ export async function setup2FA(
 
 /** Step 2: confirm OTP to activate 2FA */
 export async function enable2FA(userId: string, otp: string): Promise<void> {
-  const user = users.get(userId);
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
   if (!user) throw new AppError(404, 'User not found');
-  if (user.twoFactorEnabled) throw new AppError(400, '2FA already enabled');
-  if (!user.twoFactorSecret) throw new AppError(400, 'Run /auth/2fa/setup first');
+  if (user.two_factor_enabled) throw new AppError(400, '2FA already enabled');
+  if (!user.two_factor_secret) throw new AppError(400, 'Run /auth/2fa/setup first');
 
-  const secret = decrypt(user.twoFactorSecret);
+  const secret = decrypt(user.two_factor_secret);
   if (!verifyToken(secret, otp)) throw new AppError(401, 'Invalid or expired OTP');
 
-  user.twoFactorEnabled = true;
-  users.set(userId, user);
+  await db.update(users).set({
+    two_factor_enabled: true,
+    updated_at: new Date(),
+  }).where(eq(users.id, userId));
 }
 
 /** Disable 2FA — requires current OTP */
 export async function disable2FA(userId: string, otp: string): Promise<void> {
-  const user = users.get(userId);
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
   if (!user) throw new AppError(404, 'User not found');
-  if (!user.twoFactorEnabled) throw new AppError(400, '2FA is not enabled');
+  if (!user.two_factor_enabled) throw new AppError(400, '2FA is not enabled');
 
-  const secret = decrypt(user.twoFactorSecret!);
+  const secret = decrypt(user.two_factor_secret!);
   if (!verifyToken(secret, otp)) throw new AppError(401, 'Invalid or expired OTP');
 
-  user.twoFactorEnabled = false;
-  user.twoFactorSecret = undefined;
-  users.set(userId, user);
+  await db.update(users).set({
+    two_factor_enabled: false,
+    two_factor_secret: null,
+    updated_at: new Date(),
+  }).where(eq(users.id, userId));
 }
 
 /** Second-step login: verify OTP from temp token, issue final JWT pair */
@@ -366,17 +373,19 @@ export async function verify2FA(
   const payload = verifyJwt(tempToken, 'temp_2fa');
   const userId = payload.sub as string;
 
-  const user = users.get(userId);
-  if (!user || !user.twoFactorEnabled || !user.twoFactorSecret) {
+  const user = await db.query.users.findFirst({
+    where: eq(users.id, userId),
+  });
+  if (!user || !user.two_factor_enabled || !user.two_factor_secret) {
     throw new AppError(401, 'Invalid session');
   }
 
-  const secret = decrypt(user.twoFactorSecret);
+  const secret = decrypt(user.two_factor_secret);
   if (!verifyToken(secret, otp)) throw new AppError(401, 'Invalid or expired OTP');
 
   return {
-    accessToken: signAccess(userId, user.sessionVersion, user.role === 'admin' ? 'admin' : undefined),
-    refreshToken: signRefresh(userId, user.sessionVersion),
+    accessToken: signAccess(userId, user.session_version, user.role === 'admin' ? 'admin' : undefined),
+    refreshToken: signRefresh(userId, user.session_version),
   };
 }
 
