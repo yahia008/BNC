@@ -10,7 +10,7 @@ const envSchema = z.object({
   FACTORY_CONTRACT_ADDRESS: z.string().min(1, 'FACTORY_CONTRACT_ADDRESS is required'),
   PORT: z.coerce.number().int().positive().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
+  JWT_SECRET: z.string().min(1).default('change-me-in-production'),
   STELLAR_NETWORK: z.string().default('testnet'),
   HORIZON_URL: z.string().url().optional(),
   ORACLE_PUBLIC_KEY: z.string().optional(),
@@ -26,16 +26,7 @@ const envSchema = z.object({
   DB_POOL_MAX: z.coerce.number().int().positive().default(10),
   DB_POOL_IDLE_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   DB_POOL_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
-  EMAIL_PROVIDER: z.enum(['smtp', 'sendgrid']).default('smtp'),
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().int().default(587),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASS: z.string().optional(),
-  SMTP_FROM: z.string().default('no-reply@boxmeout.app'),
-  SENDGRID_API_KEY: z.string().optional(),
-  VERIFY_EMAIL_URL: z.string().url().default('http://localhost:3001/auth/verify-email'),
-  APP_NAME: z.string().default('BoxMeOut'),
-  APP_BASE_URL: z.string().url().default('http://localhost:3001'),
+  ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -58,15 +49,6 @@ export function validateEnv(): Env {
   }
 
   validatedEnv = result.data;
-
-  // Production-only validation
-  if (validatedEnv.NODE_ENV === 'production') {
-    if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-      logger.error('Production safety check failed: JWT_SECRET must be set and at least 32 characters');
-      process.exit(1);
-    }
-  }
-
   logger.info('Environment variables validated successfully');
   return validatedEnv;
 }

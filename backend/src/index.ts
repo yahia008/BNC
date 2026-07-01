@@ -4,6 +4,7 @@ import { validateEnv } from "./config/env";
 // Validate environment variables first before importing anything else that uses them!
 const env = validateEnv();
 
+import { createCorsMiddleware } from "./config/cors";
 import { setupSwagger } from "./config/swagger";
 import { errorMiddleware } from "./middleware/error.middleware";
 import { initSentry, applySentryRequestHandler } from "./middleware/sentry.middleware";
@@ -28,8 +29,8 @@ initSentry(env.SENTRY_DSN, env.NODE_ENV);
 
 const app = express();
 
-// Trust proxy — resolves real client IP from X-Forwarded-For header
-app.set('trust proxy', 1);
+// CORS configuration - must be before other middleware
+app.use(createCorsMiddleware());
 
 // Middleware
 app.use(pinoHttp({ logger }));
