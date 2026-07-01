@@ -6,7 +6,11 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const RPC_URL = process.env.SOROBAN_RPC_URL || 'https://soroban-testnet.stellar.org';
-const CONTRACT_ID = process.env.INVOICE_CONTRACT_ID || 'C_MOCK_INVOICE_CONTRACT_ID'; // Replace with real one
+const CONTRACT_ID = process.env.FACTORY_CONTRACT_ADDRESS;
+
+if (!CONTRACT_ID) {
+  throw new Error('FACTORY_CONTRACT_ADDRESS environment variable is not set. Cannot initialize indexer.');
+}
 
 const server = new rpc.Server(RPC_URL);
 
