@@ -147,6 +147,16 @@ pub fn emit_contract_upgraded(env: &Env, new_wasm_hash: soroban_sdk::BytesN<32>)
     env.events().publish(topics, new_wasm_hash);
 }
 
+/// Emits a `stale_reports_cleared` event when the admin removes expired pending
+/// oracle reports so a fresh resolution cycle can begin.
+///
+/// Topics: `(Symbol("stale_reports_cleared"), market_id)`
+/// Data:   `cleared_count: u32`
+pub fn emit_stale_reports_cleared(env: &Env, market_id: u64, cleared_count: u32) {
+    let topics = (Symbol::new(env, "stale_reports_cleared"), market_id);
+    env.events().publish(topics, cleared_count);
+}
+
 #[cfg(test)]
 mod tests {
     use soroban_sdk::{

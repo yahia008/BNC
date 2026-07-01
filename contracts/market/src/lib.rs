@@ -38,6 +38,10 @@ const PENDING_REPORTS: &str = "PENDING_REPORTS";
 // ─── Storage TTL Constants ────────────────────────────────────────────────────
 /// Maximum TTL for market data (30 days in ledger entries)
 const MAX_TTL: u32 = 2_592_000;
+/// How long a pending oracle report is valid before it can be cleared by admin.
+/// Set to 48 hours — long enough for all 3 oracles to submit, short enough
+/// to unblock a market if one oracle goes permanently offline.
+const REPORT_TTL: u64 = 172_800; // 48 hours in seconds
 
 // ─── Cross-contract client for oracle whitelist check ─────────────────────────
 #[contractclient(name = "FactoryClient")]
@@ -393,8 +397,10 @@ impl Market {
             return Err(ContractError::Unauthorized);
         }
 
-        // Store this report
-        pending.set(oracle.clone(), report.clone());
+        // Store this report, stamping submitted_at with the current ledger time
+        let mut report_with_ts = report.clone();
+        report_with_ts.submitted_at = env.ledger().timestamp();
+        pending.set(oracle.clone(), report_with_ts);
         env.storage().persistent().set(&PENDING_REPORTS, &pending);
 
         // Count matching and conflicting reports
@@ -429,6 +435,67 @@ impl Market {
         }
 
         Ok(())
+    }
+
+    // =========================================================================
+    // CLEAR STALE ORACLE REPORTS
+    // =========================================================================
+    /// Removes pending oracle reports that are older than `REPORT_TTL` seconds.
+    ///
+    /// If the first oracle submits a report but subsequent oracles never do,
+    /// `PENDING_REPORTS` accumulates a partial result that blocks a fresh
+    /// resolution cycle.  This admin-only function evicts those stale entries so
+    /// a new round of oracle submissions can begin.
+    ///
+    /// # Errors
+    /// - `NotAdmin`: Caller is not the factory (admin)
+    /// - `InvalidMarketStatus`: Market is already resolved or cancelled
+    ///
+    /// # Security
+    /// - Only the factory (admin) may call this to prevent griefing.
+    /// - Does NOT cancel the market; the market remains Locked so normal
+    ///   oracle resolution can proceed after the stale entries are cleared.
+    pub fn clear_stale_reports(env: Env, admin: Address) -> Result<u32, ContractError> {
+        // CHECKS
+        admin.require_auth();
+
+        let factory: Address = env
+            .storage().persistent()
+            .get(&FACTORY)
+            .ok_or(ContractError::NotFactory)?;
+        if admin != factory {
+            return Err(ContractError::NotAdmin);
+        }
+
+        let state = Self::load_state(&env)?;
+        // Only meaningful on a Locked market; Resolved/Cancelled have no pending reports
+        if state.status == MarketStatus::Resolved || state.status == MarketStatus::Cancelled {
+            return Err(ContractError::InvalidMarketStatus);
+        }
+
+        // EFFECTS
+        let now = env.ledger().timestamp();
+        let mut pending: Map<Address, OracleReport> =
+            env.storage().persistent().get(&PENDING_REPORTS).unwrap_or_else(|| Map::new(&env));
+
+        let mut fresh: Map<Address, OracleReport> = Map::new(&env);
+        let mut cleared_count: u32 = 0;
+
+        for (addr, report) in pending.iter() {
+            if now.saturating_sub(report.submitted_at) < REPORT_TTL {
+                fresh.set(addr, report);
+            } else {
+                cleared_count += 1;
+            }
+        }
+
+        env.storage().persistent().set(&PENDING_REPORTS, &fresh);
+
+        if cleared_count > 0 {
+            boxmeout_shared::emit_stale_reports_cleared(&env, state.market_id, cleared_count);
+        }
+
+        Ok(cleared_count)
     }
 
     // =========================================================================
