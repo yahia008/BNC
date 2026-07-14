@@ -1,4 +1,4 @@
-# Contributing to BANKERCHANGER
+# Contributing to BNC
 
 Thank you for contributing! Please read these guidelines before opening a PR.
 
@@ -33,7 +33,7 @@ The following CI jobs **must pass** before a PR can be merged:
 ### Configuring Branch Protection via `gh` CLI
 
 ```bash
-gh api repos/doradenise-jpg/BANKERCHANGER/branches/main/protection \
+gh api repos/doradenise-jpg/BNC/branches/main/protection \
   --method PUT \
   --field required_status_checks='{"strict":true,"contexts":["Backend","Frontend / TypeScript Build + Tests","Frontend / E2E Tests","Contracts"]}' \
   --field enforce_admins=true \

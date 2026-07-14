@@ -1,4 +1,4 @@
-# Getting Started with BANKERCHANGER
+# Getting Started with BNC
 
 Complete guide to get the full stack running on your local machine.
 

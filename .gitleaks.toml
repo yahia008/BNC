@@ -1,4 +1,4 @@
-title = "BANKERCHANGER gitleaks config"
+title = "BNC gitleaks config"
 
 [allowlist]
 description = "Known non-secret values"

@@ -1,6 +1,6 @@
 # API Error Codes
 
-This document describes all machine-readable error codes returned by the BANKERCHANGER API. Error codes enable robust, programmatic error handling in client applications without relying on error message strings.
+This document describes all machine-readable error codes returned by the BNC API. Error codes enable robust, programmatic error handling in client applications without relying on error message strings.
 
 ## Error Response Format
 

@@ -30,8 +30,8 @@ Thank you for your interest in contributing to BoxMeOut! This document provides 
 
 ```bash
 # Clone the repository
-git clone https://github.com/doradenise-jpg/BANKERCHANGER.git
-cd BANKERCHANGER
+git clone https://github.com/doradenise-jpg/BNC.git
+cd BNC
 
 # Start all services (PostgreSQL, Redis, backend, frontend)
 docker compose up -d

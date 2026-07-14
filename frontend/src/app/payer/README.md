@@ -1,6 +1,6 @@
 # Payer Dashboard — `/payer`
 
-This route renders the **Payer Dashboard**, the invoice settlement interface for users who owe payment on funded invoices within the BANKERCHANGER platform.
+This route renders the **Payer Dashboard**, the invoice settlement interface for users who owe payment on funded invoices within the BNC platform.
 
 ## Purpose
 
