@@ -1,4 +1,4 @@
-# BANKERCHANGER
+# BNC
 
 Decentralized boxing-only prediction market built on Stellar Soroban.
 
